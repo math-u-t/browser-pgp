@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>PGP in Browser — キー生成・暗号化・復号・署名・検証</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap">
+<style>
+  body{font-family:Inter,system-ui, -apple-system, "Helvetica Neue", Arial; background:#0f1724; color:#e6eef8; padding:28px;}
+  h1{margin:0 0 10px; font-weight:600;}
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:18px; align-items:start;}
+  .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); padding:16px; border-radius:10px; box-shadow: 0 6px 18px rgba(2,6,23,0.6);}
+  label{display:block; font-size:13px; margin:8px 0 4px; color:#cfe6ff;}
+  input, textarea, select, button{width:100%; padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.06); background:transparent; color:inherit; font-size:14px;}
+  textarea{min-height:120px; resize:vertical; font-family:monospace;}
+  .row{display:flex; gap:8px;}
+  button{cursor:pointer; border:0; background:#1f6feb; color:#fff; padding:10px; font-weight:600;}
+  .muted{font-size:13px; color:#98b6da;}
+  small{display:block; margin-top:6px; color:#9fb7d9;}
+  pre.armored{white-space:pre-wrap; background:rgba(0,0,0,0.3); padding:10px; border-radius:6px; font-family:monospace; font-size:13px; overflow:auto; max-height:240px;}
+  .full-width{grid-column:1/-1;}
+  .two-col{display:grid; grid-template-columns:1fr 1fr; gap:8px;}
+</style>
+</head>
+<body>
+  <h1>PGP in Browser — キー生成・暗号・復号・署名・検証</h1>
+  <p class="muted">このページはクライアント内で完結します。秘密鍵はブラウザ外に送信されません（自分で保存してください）。</p>
+
+  <div class="grid">
+    <!-- Key generation / import -->
+    <div class="card">
+      <h3>鍵生成・インポート / エクスポート</h3>
+      <label>名前（User ID）</label>
+      <input id="uidName" placeholder="例: Taro Yamada" value="Taro Yamada">
+      <label>メールアドレス</label>
+      <input id="uidEmail" placeholder="例: taro@example.com" value="taro@example.com">
+      <label>パスフレーズ（秘密鍵を保護）</label>
+      <input id="passphrase" type="password" placeholder="複雑なパスフレーズを入力">
+      <label>鍵タイプ</label>
+      <select id="keyType">
+        <option value="rsa">RSA (4096)</option>
+        <option value="ecc" selected>ECC (Curve25519)</option>
+      </select>
+      <div style="margin-top:10px;" class="row">
+        <button id="generateBtn">鍵を生成</button>
+        <button id="importPubBtn">公開鍵をインポート</button>
+        <button id="importPrivBtn">秘密鍵をインポート</button>
+      </div>
+      <small>生成した鍵はページ内のテキストボックスに表示されます。ローカルに保存する場合はテキストをファイルに保存して下さい。</small>
+      <hr>
+      <label>公開鍵（Armored）</label>
+      <pre id="pubOut" class="armored"></pre>
+      <label>秘密鍵（Armored）</label>
+      <pre id="privOut" class="armored"></pre>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button id="savePub">公開鍵をダウンロード</button>
+        <button id="savePriv">秘密鍵をダウンロード</button>
+      </div>
+    </div>
+
+    <!-- Encrypt / Sign -->
+    <div class="card">
+      <h3>暗号化 / 署名 (送信者側)</h3>
+      <label>相手の公開鍵（Armored）</label>
+      <textarea id="theirPub" placeholder="相手の公開鍵を貼り付け"></textarea>
+      <label>自分の秘密鍵（暗号化・署名用）</label>
+      <textarea id="myPriv" placeholder="自分の秘密鍵を貼り付け"></textarea>
+      <label>自分の秘密鍵パスフレーズ</label>
+      <input id="myPrivPass" type="password" placeholder="秘密鍵パスフレーズ">
+      <label>平文メッセージ</label>
+      <textarea id="plain" placeholder="ここに送るメッセージを入力"></textarea>
+      <div class="row" style="margin-top:8px;">
+        <button id="encryptBtn">暗号化して署名</button>
+        <button id="signOnlyBtn">署名のみ（暗号化せず）</button>
+      </div>
+      <label>出力（Armored）</label>
+      <pre id="encryptedOut" class="armored"></pre>
+    </div>
+
+    <!-- Decrypt / Verify -->
+    <div class="card">
+      <h3>復号 / 署名検証 (受信者側)</h3>
+      <label>受信したメッセージ（Armored）</label>
+      <textarea id="cipherIn" placeholder="受信した ASCII-armored メッセージをここに貼り付け"></textarea>
+      <label>自分の秘密鍵（復号用）</label>
+      <textarea id="myPriv2" placeholder="自分の秘密鍵を貼り付け"></textarea>
+      <label>自分の秘密鍵パスフレーズ</label>
+      <input id="myPriv2Pass" type="password" placeholder="秘密鍵パスフレーズ">
+      <label>（任意）送信者の公開鍵（署名検証用）</label>
+      <textarea id="theirPub2" placeholder="送信者の公開鍵を貼り付け"></textarea>
+      <div class="row" style="margin-top:8px;">
+        <button id="decryptBtn">復号して署名検証</button>
+        <button id="verifyOnlyBtn">署名検証のみ（復号せず）</button>
+      </div>
+      <label>復号結果 / 検証結果</label>
+      <pre id="decryptedOut" class="armored"></pre>
+      <div id="verifyDetails" class="muted"></div>
+    </div>
+
+    <!-- Utilities -->
+    <div class="card full-width">
+      <h3>ユーティリティ & 説明</h3>
+      <div class="two-col">
+        <div>
+          <h4>基本ワークフロー</h4>
+          <ol>
+            <li>鍵を生成 → 公開鍵を相手に渡す</li>
+            <li>相手の公開鍵で暗号化し、自分の秘密鍵で署名</li>
+            <li>受信側は自分の秘密鍵で復号し、送信者の公開鍵で署名を検証</li>
+          </ol>
+        </div>
+        <div>
+          <h4>注意点</h4>
+          <ul>
+            <li>秘密鍵は厳重に保管。バックアップを取る（オフライン推奨）。</li>
+            <li>このページは簡易ツール。高いセキュリティが必要な場合は専用のソフト・ハードを使ってください。</li>
+          </ul>
+        </div>
+      </div>
+      <p class="muted">実装は <code>openpgp.js</code> (v5) を利用しています。操作はすべてブラウザ内で行われます。</p>
+    </div>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/openpgp@5/dist/openpgp.min.js"></script>
+<script>
+(async()=> {
+  // 簡潔なヘルパー
+  const $ = id => document.getElementById(id);
+  const show = (id, text) => { $(id).textContent = text || ''; };
+  const showPre = (id, text) => { $(id).textContent = text || ''; };
+
+  // ボタン要素
+  const generateBtn = $('generateBtn');
+  const encryptBtn = $('encryptBtn');
+  const signOnlyBtn = $('signOnlyBtn');
+  const decryptBtn = $('decryptBtn');
+  const verifyOnlyBtn = $('verifyOnlyBtn');
+  const importPubBtn = $('importPubBtn');
+  const importPrivBtn = $('importPrivBtn');
+  const savePub = $('savePub');
+  const savePriv = $('savePriv');
+
+  // 生成
+  generateBtn.addEventListener('click', async () => {
+    try {
+      generateBtn.disabled = true;
+      show('pubOut', '生成中... 少々お待ちください');
+      show('privOut', '');
+
+      const name = $('uidName').value || 'User';
+      const email = $('uidEmail').value || 'user@example.com';
+      const passphrase = $('passphrase').value || '';
+
+      const opt = {
+        userIDs: [{ name: name, email: email }],
+        passphrase: passphrase,
+      };
+
+      if ($('keyType').value === 'rsa') {
+        opt.type = 'rsa';
+        opt.rsaBits = 4096;
+      } else {
+        // ECC Curve25519
+        opt.type = 'ecc';
+        opt.curve = 'curve25519';
+      }
+
+      // generateKey returns { privateKey, publicKey }
+      const key = await openpgp.generateKey(opt);
+
+      showPre('pubOut', key.publicKey);
+      showPre('privOut', key.privateKey);
+    } catch (err) {
+      show('pubOut', 'エラー: ' + err.message);
+      show('privOut', '');
+      console.error(err);
+    } finally {
+      generateBtn.disabled = false;
+    }
+  });
+
+  // import 公開鍵（瞬時に表示）
+  importPubBtn.addEventListener('click', async () => {
+    const text = prompt('公開鍵の ASCII-armored を貼り付けてください（キャンセルで終了）');
+    if (!text) return;
+    showPre('pubOut', text);
+  });
+  importPrivBtn.addEventListener('click', async () => {
+    const text = prompt('秘密鍵の ASCII-armored を貼り付けてください（キャンセルで終了）');
+    if (!text) return;
+    showPre('privOut', text);
+  });
+
+  // 保存
+  function downloadText(filename, text) {
+    const blob = new Blob([text], {type:'text/plain;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    a.remove(); URL.revokeObjectURL(url);
+  }
+  savePub.addEventListener('click', () => {
+    const t = $('pubOut').textContent;
+    if (!t) return alert('公開鍵がありません。');
+    downloadText('publickey.asc', t);
+  });
+  savePriv.addEventListener('click', () => {
+    const t = $('privOut').textContent;
+    if (!t) return alert('秘密鍵がありません。');
+    downloadText('privatekey.asc', t);
+  });
+
+  // 暗号化 + 署名
+  encryptBtn.addEventListener('click', async () => {
+    try {
+      encryptBtn.disabled = true;
+      show('encryptedOut', '処理中...');
+      const theirPubArm = $('theirPub').value.trim();
+      const myPrivArm = $('myPriv').value.trim();
+      const myPrivPass = $('myPrivPass').value || '';
+      const plain = $('plain').value || '';
+
+      if (!theirPubArm) { alert('相手の公開鍵を入れてください'); return; }
+      if (!myPrivArm) { alert('自分の秘密鍵を入れてください（署名用）'); return; }
+
+      // 読み込み
+      const theirPub = await openpgp.readKey({ armoredKey: theirPubArm });
+      const myPrivKey = await openpgp.readPrivateKey({ armoredKey: myPrivArm });
+
+      // パスフレーズで復号（鍵をアンロック）
+      let signingKey = myPrivKey;
+      if (myPrivPass) {
+        signingKey = await openpgp.decryptKey({ privateKey: myPrivKey, passphrase: myPrivPass });
+      }
+
+      const message = await openpgp.createMessage({ text: plain });
+
+      const encrypted = await openpgp.encrypt({
+        message,
+        encryptionKeys: theirPub,
+        signingKeys: signingKey
+      });
+
+      showPre('encryptedOut', encrypted);
+    } catch (err) {
+      showPre('encryptedOut', 'エラー: ' + err.message);
+      console.error(err);
+    } finally {
+      encryptBtn.disabled = false;
+    }
+  });
+
+  // 署名のみ（暗号化しない）
+  signOnlyBtn.addEventListener('click', async () => {
+    try {
+      signOnlyBtn.disabled = true;
+      show('encryptedOut', '署名処理中...');
+      const myPrivArm = $('myPriv').value.trim();
+      const myPrivPass = $('myPrivPass').value || '';
+      const plain = $('plain').value || '';
+
+      if (!myPrivArm) { alert('自分の秘密鍵を入れてください'); return; }
+
+      const myPrivKey = await openpgp.readPrivateKey({ armoredKey: myPrivArm });
+      let signingKey = myPrivKey;
+      if (myPrivPass) signingKey = await openpgp.decryptKey({ privateKey: myPrivKey, passphrase: myPrivPass });
+
+      // 明示的に署名のみ（ASCII署名付きメッセージ：cleartext）
+      const signed = await openpgp.sign({
+        message: await openpgp.createCleartextMessage({ text: plain }),
+        signingKeys: signingKey
+      });
+
+      showPre('encryptedOut', signed);
+    } catch (err) {
+      showPre('encryptedOut', 'エラー: ' + err.message);
+      console.error(err);
+    } finally {
+      signOnlyBtn.disabled = false;
+    }
+  });
+
+  // 復号 + 署名検証
+  decryptBtn.addEventListener('click', async () => {
+    try {
+      decryptBtn.disabled = true;
+      show('decryptedOut', '処理中...');
+      $('verifyDetails').textContent = '';
+
+      const armored = $('cipherIn').value.trim();
+      const myPrivArm = $('myPriv2').value.trim();
+      const myPrivPass = $('myPriv2Pass').value || '';
+      const theirPubArm = $('theirPub2').value.trim();
+
+      if (!armored) { alert('受信メッセージを入力してください'); return; }
+      if (!myPrivArm) { alert('受信者の秘密鍵を入力してください'); return; }
+
+      // 読み込み
+      const message = await openpgp.readMessage({ armoredMessage: armored });
+      const myPrivKey = await openpgp.readPrivateKey({ armoredKey: myPrivArm });
+      let decryptionKey = myPrivKey;
+      if (myPrivPass) decryptionKey = await openpgp.decryptKey({ privateKey: myPrivKey, passphrase: myPrivPass });
+
+      let verificationKeys = undefined;
+      if (theirPubArm) {
+        const theirPub = await openpgp.readKey({ armoredKey: theirPubArm });
+        verificationKeys = theirPub;
+      }
+
+      const result = await openpgp.decrypt({
+        message,
+        decryptionKeys: decryptionKey,
+        verificationKeys // optional
+      });
+
+      // result.data is decrypted text
+      showPre('decryptedOut', result.data);
+
+      // 署名の検証
+      if (result.signatures && result.signatures.length) {
+        let details = '';
+        for (let i=0;i<result.signatures.length;i++) {
+          try {
+            await result.signatures[i].verified; // throws if invalid
+            details += `署名 ${i+1}: 有効\n`;
+          } catch (e) {
+            details += `署名 ${i+1}: 無効（${e.message}）\n`;
+          }
+        }
+        $('verifyDetails').textContent = details;
+      } else {
+        $('verifyDetails').textContent = '署名情報は見つかりませんでした。';
+      }
+    } catch (err) {
+      showPre('decryptedOut', 'エラー: ' + err.message);
+      console.error(err);
+    } finally {
+      decryptBtn.disabled = false;
+    }
+  });
+
+  // 署名検証のみ（復号不要な cleartext signed message または detached など）
+  verifyOnlyBtn.addEventListener('click', async () => {
+    try {
+      verifyOnlyBtn.disabled = true;
+      $('verifyDetails').textContent = '検証中...';
+      const armored = $('cipherIn').value.trim();
+      const theirPubArm = $('theirPub2').value.trim();
+
+      if (!armored) { alert('メッセージを入力してください'); return; }
+      if (!theirPubArm) { alert('署名検証用の公開鍵を入力してください'); return; }
+
+      const pub = await openpgp.readKey({ armoredKey: theirPubArm });
+
+      // try cleartext signed
+      if (armored.includes('BEGIN PGP SIGNED MESSAGE')) {
+        const verified = await openpgp.verify({
+          message: await openpgp.cleartext.readArmored(armored),
+          verificationKeys: pub
+        });
+        // verified.signatures array
+        let details = '';
+        for (let i=0;i<verified.signatures.length;i++){
+          try {
+            await verified.signatures[i].verified;
+            details += `署名 ${i+1}: 有効\n`;
+          } catch (e) {
+            details += `署名 ${i+1}: 無効\n`;
+          }
+        }
+        $('verifyDetails').textContent = details;
+        showPre('decryptedOut', verified.data); // cleartext message
+        return;
+      }
+
+      // それ以外は通常の verify（例えば detached は未実装）
+      $('verifyDetails').textContent = 'このモードは cleartext-signed メッセージを想定しています。';
+    } catch (err) {
+      $('verifyDetails').textContent = 'エラー: ' + err.message;
+      console.error(err);
+    } finally {
+      verifyOnlyBtn.disabled = false;
+    }
+  });
+
+})();
+</script>
+</body>
+</html>
